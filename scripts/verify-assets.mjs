@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 
 const folder = process.argv[2] === 'dist' ? 'dist' : 'public';
 const expected = [
-  'zero2players-logo.png', 'demo-person.svg', 'demo-person-blue.svg',
+  'zero2players-logo.png', 'zero2players-logo-v2.png', 'demo-person.svg', 'demo-person-blue.svg',
   'brand-background.svg', 'arena-background.svg', 'react-background.svg',
   'tutorial-screen.svg',
   'pieces/arrow-red.svg', 'pieces/focus-ring.svg',

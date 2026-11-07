@@ -36,10 +36,10 @@ import { PASTEBOARD, boundedImageSize, calculateCropPatch, findFreePosition } fr
 import { findAlphaBounds } from './lib/alphaBounds';
 
 type Tab='templates'|'frames'|'elements'|'brand'|'director'|'projects';
-const DEFAULT_LOGO='/zero2players-logo.png';
+const DEFAULT_LOGO='/zero2players-logo-v2.png';
 const txt=(l?:SceneLayer):l is TextLayer=>l?.type==='text';
 const pic=(l?:SceneLayer):l is PictureLayer=>l?.type==='picture';
-function savedBrand(){try{return localStorage.getItem('z2-logo')||DEFAULT_LOGO;}catch{return DEFAULT_LOGO;}}
+function savedBrand(){try{const src=localStorage.getItem('z2-logo');return src&&src!=='/zero2players-logo.png'?src:DEFAULT_LOGO;}catch{return DEFAULT_LOGO;}}
 function SizeNumber({label,value,onCommit}:{label:string;value:number;onCommit:(value:number)=>void}){
   const [draft,setDraft]=useState(String(Math.round(value)));
   useEffect(()=>setDraft(String(Math.round(value))),[value]);
@@ -703,6 +703,25 @@ export default function App(){
       setSelected('logo');setNotice('Logo aplicado nos templates; paleta extraída localmente.');
     }catch(e){setNotice(`Falha ao ler logo: ${e instanceof Error?e.message:String(e)}`);}
   }
+  /** Explicitly apply the shipped logo to the current project and both formats.
+   * This intentionally does not alter any other saved projects or custom brands.
+   */
+  function useCurrentDefaultLogo(){
+    const replaceLogo=(scene:Template):Template=>({...scene,layers:scene.layers.map(layer=>
+      pic(layer)&&layer.role==='logo'?{...layer,src:DEFAULT_LOGO}:layer)});
+    setBrandSrc(DEFAULT_LOGO);
+    try{localStorage.removeItem('z2-logo');}catch{}
+    setProject(prev=>replaceLogo(prev));
+    setFormatScenes(prev=>{
+      const next={...prev};
+      for(const ratio of ['16:9','9:16'] as const){
+        const scene=next[ratio];
+        if(scene)next[ratio]=replaceLogo(scene);
+      }
+      return next;
+    });
+    setNotice('Novo PNG padrão aplicado ao projeto e aos dois formatos. Suas outras marcas personalizadas foram preservadas.');
+  }
   function addArrow(){
     const id=crypto.randomUUID(),width=250,height=155;
     const pos=findFreePosition(project,width,height,selectedIds);
@@ -908,7 +927,7 @@ export default function App(){
             {project.slots&&project.slots.length>0&&<section className="frame-slots"><h4>Substituir peças da moldura</h4>{project.slots.map(slot=><button key={slot.id} onClick={()=>chooseSlot(slot)}><span>{slot.role==='face'?'📷':slot.role==='title'?'✏️':slot.role==='logo'?'🟡':'🖼️'} {slot.label}</span><strong>{slot.role==='title'?'Editar':'Trocar'}</strong></button>)}<p>Também é possível arrastar um arquivo de imagem do computador sobre o slot no canvas. Soltar fora dos slots troca o fundo.</p></section>}
             <div className="sidebar-tip"><Sparkles size={16}/> Os retângulos pontilhados são guias de edição: não aparecem no PNG exportado.</div>
           </>}
-          {tab==='brand'&&<><h3>Minha Marca</h3><p>O logo é compartilhado por todos os templates e fica salvo neste navegador.</p><div className="brand-panel"><img src={publicAssetUrl(brandSrc)} alt="Marca ativa"/><strong>Identidade do Canal</strong><button onClick={()=>logoInputRef.current?.click()}><Upload size={16}/> Carregar novo logo</button><button className="small-reset" onClick={()=>{setBrandSrc(DEFAULT_LOGO);localStorage.removeItem('z2-logo');setProject(prev=>({...prev,layers:prev.layers.map(l=>pic(l)&&l.role==='logo'?{...l,src:DEFAULT_LOGO}:l)}));}}>Restaurar logo original</button></div><h4>Paleta extraída automaticamente</h4><div className="brand-swatches">{palette.map(c=><button key={c} style={{background:c}} title={`Aplicar ${c} ao texto`} onClick={()=>{if(txt(current))updateLayer(current.id,{color:c});else setNotice('Selecione um texto no canvas para aplicar a cor.');}}/>)}</div></>}
+          {tab==='brand'&&<><h3>Minha Marca</h3><p>O logo é compartilhado por todos os templates e fica salvo neste navegador.</p><div className="brand-panel"><img src={publicAssetUrl(brandSrc)} alt="Marca ativa"/><strong>Identidade do Canal</strong><button onClick={()=>logoInputRef.current?.click()}><Upload size={16}/> Carregar novo logo</button><button className="small-reset" onClick={useCurrentDefaultLogo}>Restaurar logo original</button></div><h4>Paleta extraída automaticamente</h4><div className="brand-swatches">{palette.map(c=><button key={c} style={{background:c}} title={`Aplicar ${c} ao texto`} onClick={()=>{if(txt(current))updateLayer(current.id,{color:c});else setNotice('Selecione um texto no canvas para aplicar a cor.');}}/>)}</div></>}
           {tab==='elements'&&<>
             <div className="asset-library-heading"><div><h3>Biblioteca de peças</h3><p>Peças prontas e personalizadas para arrastar, redimensionar e reutilizar.</p></div>
               <button className="asset-import-button" disabled={customPiecesBusy} onClick={()=>customPieceInputRef.current?.click()}><ImagePlus size={16}/>{customPiecesBusy?'Importando…':'Adicionar peça'}</button>

@@ -1,12 +1,15 @@
-/**
- * Runtime public-asset URLs that work at both / (localhost) and the GitHub Pages
- * repository subpath (/thumbnail-studio/). Vite does not rewrite strings stored
- * in the editable template JSON or in IndexedDB.
- *
- * Keep saved scene data portable: only resolve paths when fetching/rendering.
+/** Resolve static public assets on localhost and GitHub Pages.
+ * Use a versioned logo filename to avoid a previously cached PNG.
+ * Old saved projects that refer to the former default filename
+ * automatically render the new logo, without touching user uploads.
  */
 export function publicAssetUrl(src: string): string {
-  if (!src || !src.startsWith('/') || src.startsWith('//')) return src;
+  if (!src) return src;
+  if (src === '/zero2players-logo.png' || src === 'zero2players-logo.png' ||
+      src === '/thumbnail-studio/zero2players-logo.png') {
+    src = '/zero2players-logo-v2.png';
+  }
+  if (!src.startsWith('/') || src.startsWith('//')) return src;
   const base = import.meta.env.BASE_URL || '/';
   if (base === '/') return src;
   const prefix = base.replace(/\/+$/, '');
