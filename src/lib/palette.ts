@@ -1,3 +1,5 @@
+import { publicAssetUrl } from './publicAssets';
+
 const rgbToHex = (r: number, g: number, b: number) =>
   '#' + [r, g, b].map(c => Math.max(0, Math.min(255, Math.round(c))).toString(16).padStart(2, '0')).join('');
 
@@ -7,7 +9,7 @@ export async function extractPalette(src: string): Promise<string[]> {
     const img = new Image();
     img.onload = () => resolve(img);
     img.onerror = () => reject(new Error('Não foi possível ler a imagem da marca.'));
-    img.src = src;
+    img.src = publicAssetUrl(src);
   });
   const canvas = document.createElement('canvas');
   canvas.width = 56; canvas.height = 56;

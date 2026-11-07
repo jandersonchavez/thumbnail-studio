@@ -1,6 +1,7 @@
 import type { Template } from '../types/editor';
 import type { SavedProject, ProjectVersion } from './projectStore';
 import { parseArchive } from './projectStore';
+import { publicAssetUrl } from './publicAssets';
 
 // Self-contained, uncompressed ZIP package (standard ZIP store method). No new npm deps.
 const enc=new TextEncoder(),dec=new TextDecoder();
@@ -51,7 +52,7 @@ async function encodeScenes(project:SavedProject,versions:ProjectVersion[]){
   async function toAsset(src:string|undefined):Promise<string|undefined>{
     if(!src)return src;
     if(bySource.has(src))return bySource.get(src);
-    const response=await fetch(src);
+    const response=await fetch(publicAssetUrl(src));
     if(!response.ok)throw new Error(`Falha ao incluir imagem no backup: ${src.slice(0,80)}`);
     const blob=await response.blob();
     if(blob.size>40*1024*1024)throw new Error('Uma imagem excede 40 MB; reduza seu tamanho antes de exportar.');

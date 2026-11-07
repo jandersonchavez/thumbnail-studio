@@ -258,3 +258,23 @@ html,body,#root{width:100%;height:100%;min-width:0;margin:0}
 .zoom-outline-preview{position:absolute;z-index:35;pointer-events:none;border:2px dashed #ffe36d;background:rgba(255,204,45,.04);box-shadow:0 0 0 1px #1119 inset;display:flex;align-items:flex-start;justify-content:flex-end;color:#111;font-size:12px;font-weight:900;padding:5px;}
 .zoom-outline-preview[hidden]{display:none!important;}
 .zoom-outline-preview::first-line{background:#ffcc2d;}
+
+
+/* v0.8.6 — side panels can collapse independently; artboard expands automatically. */
+.studio-grid.panel-left-hidden {grid-template-columns:minmax(0,1fr) clamp(245px,22vw,305px)}
+.studio-grid.panel-right-hidden {grid-template-columns:clamp(220px,22vw,320px) minmax(0,1fr)}
+.studio-grid.panel-left-hidden.panel-right-hidden {grid-template-columns:minmax(0,1fr)}
+.studio-grid.panel-left-hidden>.studio-left,
+.studio-grid.panel-right-hidden>.studio-right {display:none}
+.layout-controls{display:flex;flex-wrap:nowrap;align-items:center;gap:3px;border:1px solid #36363d;border-radius:12px;background:#0c0c0e;padding:3px}
+.layout-controls button{min-height:34px;display:flex;align-items:center;justify-content:center;gap:6px;border:1px solid transparent;border-radius:9px;padding:7px 9px;background:#242428;color:#f4f3f5;font-size:11px;font-weight:800;white-space:nowrap}
+.layout-controls button:hover{background:#3d3729;border-color:#ba902d}
+.layout-controls button[aria-pressed="true"]{background:#473514;color:#ffd45a;border-color:#7e6227}
+.layout-controls button.active{background:#ffca2e;color:#101012}
+@media(max-width:1260px){.layout-controls button span{display:none}.layout-controls button{padding:8px}}
+@media(max-width:980px){
+  /* On narrow screens the original layout stacks the panels instead of using columns. */
+  .studio-grid.panel-left-hidden,.studio-grid.panel-right-hidden,.studio-grid.panel-left-hidden.panel-right-hidden{display:flex;flex-direction:column}
+  .studio-grid.panel-left-hidden.panel-right-hidden>.studio-workspace{height:calc(100dvh - 160px);min-height:370px}
+}
+@media(max-width:580px){.layout-controls{flex:0 0 auto}}

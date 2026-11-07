@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, Download, Move, RotateCcw, X } from 'lucide-react';
 import type { NormalizedCrop } from '../types/editor';
+import { publicAssetUrl } from '../lib/publicAssets';
 
 type Props = { src:string; initial?:NormalizedCrop; fileName?:string; onApply:(crop:NormalizedCrop|undefined)=>void; onClose:()=>void };
 type Point={x:number;y:number};
@@ -29,7 +30,7 @@ export default function CropEditor({src,initial,fileName,onApply,onClose}:Props)
     let active=true;const img=new Image();img.crossOrigin='anonymous';
     img.onload=()=>{if(active){source.current=img;setSize({width:img.naturalWidth,height:img.naturalHeight});}};
     img.onerror=()=>{if(active)setDownloadError('Não foi possível carregar a imagem.');};
-    img.src=src;return()=>{active=false;};
+    img.src=publicAssetUrl(src);return()=>{active=false;};
   },[src]);
   useEffect(()=>{
     const node=stage.current;if(!node)return;
@@ -119,7 +120,7 @@ export default function CropEditor({src,initial,fileName,onApply,onClose}:Props)
       <div className="crop-body">
         <div className="crop-stage" ref={stage}>
           <div className="crop-image-box" style={{width:imgW,height:imgH}} onPointerDown={begin} onPointerMove={move} onPointerUp={finish} onPointerCancel={finish}>
-            <img src={src} alt="Foto para recorte" draggable={false}/>
+            <img src={publicAssetUrl(src)} alt="Foto para recorte" draggable={false}/>
             <div className="crop-shade top" style={{height:`${crop.y*100}%`}}/>
             <div className="crop-shade bottom" style={{top:`${(crop.y+crop.height)*100}%`,height:`${(1-crop.y-crop.height)*100}%`}}/>
             <div className="crop-shade left" style={{top:`${crop.y*100}%`,height:`${crop.height*100}%`,width:`${crop.x*100}%`}}/>

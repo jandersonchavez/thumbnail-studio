@@ -5,6 +5,7 @@ import Konva from 'konva';
 import type { KonvaEventObject } from 'konva/lib/Node';
 import type { SceneLayer, PictureLayer, Template } from '../types/editor';
 import { PASTEBOARD } from '../lib/workspaceLayout';
+import { publicAssetUrl } from '../lib/publicAssets';
 
 const ARROW_W=250, ARROW_H=155;
 const minimum=(n:number)=>Math.max(24,Math.round(n));
@@ -14,7 +15,7 @@ type OnChoose=(id:string|null,additive?:boolean)=>void;
 
 /** A crop is stored in source-relative coordinates and never changes the original photo. */
 function Picture({item,onChoose,onMoveStart,onMove,onMoveFinish}: {item:PictureLayer;onChoose:OnChoose;onMoveStart:(id:string)=>void;onMove:(id:string,node:Konva.Node)=>void;onMoveFinish:(id:string,node:Konva.Node)=>void}){
-  const [img,status]=useImage(item.src,'anonymous');
+  const [img,status]=useImage(publicAssetUrl(item.src),'anonymous');
   const sw=img?.naturalWidth??0,sh=img?.naturalHeight??0;
   const raw=item.crop;
   const srcX=raw?raw.x*sw:0,srcY=raw?raw.y*sh:0;
@@ -50,7 +51,7 @@ function Picture({item,onChoose,onMoveStart,onMove,onMoveFinish}: {item:PictureL
 }
 function Backdrop({template}:{template:Template}){
   const {width,height,background}=template;
-  const [img]=useImage(background.src,'anonymous');
+  const [img]=useImage(publicAssetUrl(background.src),'anonymous');
   const imgRef=useRef<Konva.Image>(null);
   useEffect(()=>{
     const node=imgRef.current;if(!node)return;

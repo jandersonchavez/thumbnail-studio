@@ -20,40 +20,45 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-
     steps:
-      - name: Baixar codigo do repositorio
+      - name: Baixar código
         uses: actions/checkout@v4
 
       - name: Preparar Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
 
-      - name: Instalar dependencias
-        run: npm ci --include=dev
+      - name: Instalar dependências
+        run: |
+          if [ -f package-lock.json ]; then npm ci --include=dev; else npm install --include=dev; fi
 
-      # As fotos dos usuarios nunca sao enviadas para este workflow.
-      # Apenas os pesos do modelo e o runtime WASM sao baixados aqui.
-      - name: Preparar modelos de recorte local
+      - name: Conferir imagens do editor
+        run: npm run check:assets
+
+      # Modelo/WASM servidos pelo mesmo site; fotos nunca são enviadas para o Actions.
+      - name: Preparar modelos de IA local
         run: npm run models:setup
 
-      # Define a base somente na publicacao, preservando o localhost.
-      - name: Compilar para o GitHub Pages
+      - name: Compilar React + Vite para /thumbnail-studio/
         run: npm run build -- --base=/thumbnail-studio/
 
-      - name: Conferir arquivos publicados
-        run: test -f dist/index.html && test -d dist/models && test -n "$(ls -A dist/models)"
+      - name: Conferir imagens e modelos publicados
+        run: |
+          npm run check:dist
+          test -s dist/index.html
+          test -d dist/models
+          test -n "$(find dist/models -type f -size +0c -print -quit)"
+          grep -q '/thumbnail-studio/assets/' dist/index.html
 
       - name: Configurar GitHub Pages
         uses: actions/configure-pages@v5
 
-      - name: Enviar artefato da pagina
+      - name: Enviar arquivos do site
         uses: actions/upload-pages-artifact@v4
         with:
           path: ./dist
 
-      - name: Publicar site
+      - name: Publicar
         id: deployment
         uses: actions/deploy-pages@v4

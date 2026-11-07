@@ -1,3 +1,4 @@
+import { publicAssetUrl } from './lib/publicAssets';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import type Konva from 'konva';
@@ -6,7 +7,7 @@ import {
   ImagePlus, LayoutTemplate, LockKeyhole,
   Palette, ShieldCheck, Sparkles, Type, Upload, WandSparkles,
   Trash2, RotateCcw, Smartphone, Monitor, ZoomIn, ZoomOut, Maximize2, Plus, Minus, Link2, Unlink2, Save, AlertTriangle, FolderOpen,
-  FolderPlus, History, FileDown, FileUp, FlipHorizontal2, FlipVertical2, ChevronsUp, ChevronsDown, Copy, Crop, MousePointer2, ListChecks
+  FolderPlus, History, FileDown, FileUp, FlipHorizontal2, FlipVertical2, ChevronsUp, ChevronsDown, Copy, Crop, MousePointer2, ListChecks, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Expand, Shrink
 } from 'lucide-react';
 import ThumbnailCanvas from './components/ThumbnailCanvas';
 import { catalog, createTemplate } from './templates/catalog';
@@ -76,6 +77,25 @@ export default function App(){
   const [notice,setNotice]=useState('Clique em uma peça ou use Shift+clique para selecionar várias. Ctrl+D duplica.');
   const [palette,setPalette]=useState<string[]>(['#ffcc00','#f59e0b','#ffffff','#09090b']);
   const [guides,setGuides]=useState(false);
+  // Layout-only preferences: never stored in project data or included in exported PNGs.
+  const [leftPanelOpen,setLeftPanelOpen]=useState(true);
+  const [rightPanelOpen,setRightPanelOpen]=useState(true);
+  const [focusMode,setFocusMode]=useState(false);
+  const leftVisible=!focusMode&&leftPanelOpen;
+  const rightVisible=!focusMode&&rightPanelOpen;
+  function toggleSidePanel(side:'left'|'right'){
+    // Opening one panel from focus mode keeps the other panel collapsed.
+    if(focusMode){
+      setFocusMode(false);
+      if(side==='left'){setLeftPanelOpen(true);setRightPanelOpen(false);}
+      else{setRightPanelOpen(true);setLeftPanelOpen(false);}
+    }else if(side==='left')setLeftPanelOpen(v=>!v);
+    else setRightPanelOpen(v=>!v);
+    // Refit artboard into the available workspace; do not change export resolution.
+    setManualZoom(null);
+  }
+  function toggleFocusMode(){setFocusMode(v=>!v);setManualZoom(null);}
+
   const [showSlots,setShowSlots]=useState(true);
   const [maskSession,setMaskSession]=useState<{id:string;original:Blob|null;cutout:Blob}|null>(null);
   const [containerSize,setContainerSize]=useState({w:950,h:650});
@@ -222,7 +242,11 @@ export default function App(){
         e.preventDefault();duplicateSelected();
       }else if(e.key==='Delete'||e.key==='Backspace'){
         if(selectedIds.length){e.preventDefault();deleteSelected();}
-      }else if(e.key==='Escape')setSelectedIds([]);
+      }else if(e.key.toLowerCase()==='f'&&!cmd&&!e.altKey){
+        e.preventDefault();toggleFocusMode();
+      }else if(e.key==='Escape'){
+        if(focusMode)toggleFocusMode();else setSelectedIds([]);
+      }
     };
     window.addEventListener('keydown',onShortcuts);
     return()=>window.removeEventListener('keydown',onShortcuts);
@@ -439,14 +463,14 @@ export default function App(){
     const img=new Image();
     img.onload=()=>{if(active)setImageSize({src:currentPictureSrc,width:img.naturalWidth,height:img.naturalHeight});};
     img.onerror=()=>{if(active)setImageSize({src:currentPictureSrc,width:0,height:0});};
-    img.src=currentPictureSrc;
+    img.src=publicAssetUrl(currentPictureSrc);
     return ()=>{active=false;};
   },[currentPictureSrc]);
   useEffect(()=>{
     let active=true;const src=project.background.src;const img=new Image();
     img.onload=()=>{if(active)setBackgroundSize({src,width:img.naturalWidth,height:img.naturalHeight});};
     img.onerror=()=>{if(active)setBackgroundSize({src,width:0,height:0});};
-    img.src=src;return()=>{active=false;};
+    img.src=publicAssetUrl(src);return()=>{active=false;};
   },[project.background.src]);
   const backgroundRatio=backgroundSize.width/Math.max(1,backgroundSize.height);
   const backgroundRatioError=Math.max(backgroundRatio/(project.width/project.height),(project.width/project.height)/backgroundRatio)-1;
@@ -510,7 +534,7 @@ export default function App(){
       if(w>0&&h>0)updateLayer(layer.id,calculateCropPatch(layer,crop,w,h,project));
       else {
         const image=new Image();image.onload=()=>updateLayer(layer.id,calculateCropPatch(layer,crop,image.naturalWidth,image.naturalHeight,project));
-        image.src=layer.src;
+        image.src=publicAssetUrl(layer.src);
       }
     }
     setCroppingId(null);
@@ -793,13 +817,24 @@ export default function App(){
 
   return <div className="studio-shell">
     <header className="studio-top">
-      <div className="studio-brand"><img src={brandSrc} alt="Logo Zero a 2"/><div><strong>ZERO A 2 STUDIO</strong><small>Editor modular de thumbnails · {project.width} × {project.height}px</small></div><button className="quiet-btn" onClick={()=>logoInputRef.current?.click()}>Trocar / Editar Logo</button></div>
+      <div className="studio-brand"><img src={publicAssetUrl(brandSrc)} alt="Logo Zero a 2"/><div><strong>ZERO A 2 STUDIO</strong><small>Editor modular de thumbnails · {project.width} × {project.height}px</small></div><button className="quiet-btn" onClick={()=>logoInputRef.current?.click()}>Trocar / Editar Logo</button></div>
       <div className="top-controls">
         <div className="project-save-indicator" title="Os projetos são salvos localmente no navegador; exporte backups para protegê-los">
           <span className={`save-dot ${saveStatus}`}/>{saveStatus==='saved'?'Salvo':saveStatus==='saving'?'Salvando…':saveStatus==='error'?'Erro ao salvar':saveStatus==='loading'?'Carregando…':'Alterações pendentes'}
         </div>
         <button className="outline-top" disabled={!storageReady||projectActionBusy} onClick={()=>void flushCurrent().then(()=>setNotice('Projeto salvo neste navegador.')).catch(()=>{})}><Save size={15}/> Salvar agora</button>
         <button className="outline-top" onClick={()=>setTab('projects')}><FolderOpen size={15}/> Projetos</button>
+        <div className="layout-controls" role="group" aria-label="Visualização dos painéis">
+          <button type="button" aria-label={leftVisible?'Esconder biblioteca':'Mostrar biblioteca'} aria-pressed={!leftVisible} title={leftVisible?'Esconder painel esquerdo':'Mostrar painel esquerdo'} onClick={()=>toggleSidePanel('left')}>
+            {leftVisible?<PanelLeftClose size={17}/>:<PanelLeftOpen size={17}/>}<span>Biblioteca</span>
+          </button>
+          <button type="button" aria-label={rightVisible?'Esconder propriedades':'Mostrar propriedades'} aria-pressed={!rightVisible} title={rightVisible?'Esconder painel direito':'Mostrar painel direito'} onClick={()=>toggleSidePanel('right')}>
+            {rightVisible?<PanelRightClose size={17}/>:<PanelRightOpen size={17}/>}<span>Propriedades</span>
+          </button>
+          <button type="button" className={focusMode?'active':''} aria-label={focusMode?'Sair do modo foco':'Entrar no modo foco'} aria-pressed={focusMode} title="Modo foco (tecla F). Esc retorna aos painéis" onClick={toggleFocusMode}>
+            {focusMode?<Shrink size={17}/>:<Expand size={17}/>}<span>{focusMode?'Sair do foco':'Modo foco'}</span>
+          </button>
+        </div>
         <div className="format-switch"><button className={format==='16:9'?'on':''} onClick={()=>switchFormat('16:9')}><Monitor size={14}/> YouTube 16:9</button><button className={format==='9:16'?'on':''} onClick={()=>switchFormat('9:16')}><Smartphone size={14}/> TikTok 9:16</button></div>
         <div className="zoom-control" aria-label="Zoom do canvas" title="Muda só o tamanho na tela. O arquivo PNG mantém a resolução original.">
           <button title="Diminuir zoom do canvas" aria-label="Diminuir zoom" onClick={()=>setManualZoom(clampCanvasZoom(scale-.1))}><ZoomOut size={15}/></button>
@@ -812,7 +847,7 @@ export default function App(){
         <button className="studio-export" onClick={exportPng}><ArrowDownToLine size={17}/> Exportar HD</button>
       </div>
     </header>
-    <div className="studio-grid">
+    <div className={`studio-grid ${leftVisible?'':'panel-left-hidden'} ${rightVisible?'':'panel-right-hidden'}`}>
       <aside className="studio-left">
         <nav className="sidebar-tabs">
           {([['projects',FolderOpen,'Projetos'],['templates',LayoutTemplate,'Templates'],['frames',LayoutTemplate,'Molduras'],['brand',Palette,'Meu Logo'],['elements',Sparkles,'Peças'],['director',ShieldCheck,'Diretor IA']] as const).map(([id,Icon,label])=><button key={id} className={tab===id?'active':''} onClick={()=>setTab(id)}><Icon size={20}/>{label}</button>)}
@@ -873,7 +908,7 @@ export default function App(){
             {project.slots&&project.slots.length>0&&<section className="frame-slots"><h4>Substituir peças da moldura</h4>{project.slots.map(slot=><button key={slot.id} onClick={()=>chooseSlot(slot)}><span>{slot.role==='face'?'📷':slot.role==='title'?'✏️':slot.role==='logo'?'🟡':'🖼️'} {slot.label}</span><strong>{slot.role==='title'?'Editar':'Trocar'}</strong></button>)}<p>Também é possível arrastar um arquivo de imagem do computador sobre o slot no canvas. Soltar fora dos slots troca o fundo.</p></section>}
             <div className="sidebar-tip"><Sparkles size={16}/> Os retângulos pontilhados são guias de edição: não aparecem no PNG exportado.</div>
           </>}
-          {tab==='brand'&&<><h3>Minha Marca</h3><p>O logo é compartilhado por todos os templates e fica salvo neste navegador.</p><div className="brand-panel"><img src={brandSrc} alt="Marca ativa"/><strong>Identidade do Canal</strong><button onClick={()=>logoInputRef.current?.click()}><Upload size={16}/> Carregar novo logo</button><button className="small-reset" onClick={()=>{setBrandSrc(DEFAULT_LOGO);localStorage.removeItem('z2-logo');setProject(prev=>({...prev,layers:prev.layers.map(l=>pic(l)&&l.role==='logo'?{...l,src:DEFAULT_LOGO}:l)}));}}>Restaurar logo original</button></div><h4>Paleta extraída automaticamente</h4><div className="brand-swatches">{palette.map(c=><button key={c} style={{background:c}} title={`Aplicar ${c} ao texto`} onClick={()=>{if(txt(current))updateLayer(current.id,{color:c});else setNotice('Selecione um texto no canvas para aplicar a cor.');}}/>)}</div></>}
+          {tab==='brand'&&<><h3>Minha Marca</h3><p>O logo é compartilhado por todos os templates e fica salvo neste navegador.</p><div className="brand-panel"><img src={publicAssetUrl(brandSrc)} alt="Marca ativa"/><strong>Identidade do Canal</strong><button onClick={()=>logoInputRef.current?.click()}><Upload size={16}/> Carregar novo logo</button><button className="small-reset" onClick={()=>{setBrandSrc(DEFAULT_LOGO);localStorage.removeItem('z2-logo');setProject(prev=>({...prev,layers:prev.layers.map(l=>pic(l)&&l.role==='logo'?{...l,src:DEFAULT_LOGO}:l)}));}}>Restaurar logo original</button></div><h4>Paleta extraída automaticamente</h4><div className="brand-swatches">{palette.map(c=><button key={c} style={{background:c}} title={`Aplicar ${c} ao texto`} onClick={()=>{if(txt(current))updateLayer(current.id,{color:c});else setNotice('Selecione um texto no canvas para aplicar a cor.');}}/>)}</div></>}
           {tab==='elements'&&<>
             <div className="asset-library-heading"><div><h3>Biblioteca de peças</h3><p>Peças prontas e personalizadas para arrastar, redimensionar e reutilizar.</p></div>
               <button className="asset-import-button" disabled={customPiecesBusy} onClick={()=>customPieceInputRef.current?.click()}><ImagePlus size={16}/>{customPiecesBusy?'Importando…':'Adicionar peça'}</button>
@@ -881,7 +916,7 @@ export default function App(){
             <small className="asset-import-hint">Importe SVG, PNG, JPG ou WebP (até 12 MB cada). A arte é armazenada localmente e pode ser usada em outros projetos.</small>
             <div className="asset-grid" aria-label="Peças do estúdio">
               {nativePieces.map(piece => <button key={piece.id} title={`Inserir ${piece.name}`} onClick={()=>addPicturePiece(piece.name,piece.src,piece.width,piece.height)}>
-                <img src={piece.src} alt={piece.name} draggable={false}/><span>{piece.name}</span>
+                <img src={publicAssetUrl(piece.src)} alt={piece.name} draggable={false}/><span>{piece.name}</span>
               </button>)}
               <button onClick={addArrow}><ArrowUpRight size={31}/><span>Seta editável</span></button>
               <button onClick={addCircle}><Circle size={31}/><span>Círculo editável</span></button>
@@ -894,7 +929,7 @@ export default function App(){
               <div className="asset-grid asset-custom-grid" aria-label="Peças importadas pelo usuário">
                 {customPieces.map(piece=><div key={piece.id} className="asset-custom-card">
                   <button className="asset-custom-insert" title={`Inserir ${piece.name}`} onClick={()=>addPicturePiece(piece.name,piece.src,piece.width,piece.height)}>
-                    <img src={piece.src} alt={piece.name} draggable={false}/><span>{piece.name}</span>
+                    <img src={publicAssetUrl(piece.src)} alt={piece.name} draggable={false}/><span>{piece.name}</span>
                   </button>
                   <button className="asset-custom-remove" title={`Remover ${piece.name} da biblioteca`} aria-label={`Remover ${piece.name}`} onClick={()=>void removeCustomPieceFromLibrary(piece)}><Trash2 size={14}/></button>
                 </div>)}
