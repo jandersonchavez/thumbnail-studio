@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 import type Konva from 'konva';
 import {
   ArrowDownToLine, ArrowUp, ArrowDown, ArrowUpRight, Check, Circle, Eye,
@@ -30,6 +31,8 @@ import { makeAssetBundle, parseAssetBundle } from './lib/assetBundle';
 import { nativePieces, findNativePiece, repairNativePieces } from './assets/pieces/catalog';
 import { listCustomPieces, importCustomPiece, deleteCustomPiece } from './lib/customPieceStore';
 import type { CustomPiece } from './lib/customPieceStore';
+import { PASTEBOARD, boundedImageSize, calculateCropPatch, findFreePosition } from './lib/workspaceLayout';
+import { findAlphaBounds } from './lib/alphaBounds';
 
 type Tab='templates'|'frames'|'elements'|'brand'|'director'|'projects';
 const DEFAULT_LOGO='/zero2players-logo.png';
@@ -92,6 +95,11 @@ export default function App(){
   const latest=useRef<SavedProject | null>(null);
 
   const [manualZoom,setManualZoom]=useState<number|null>(null);
+  const canvasResizeRef=useRef<{x:number;y:number;scale:number;proposed:number}|null>(null);
+  const zoomPreviewRef=useRef<HTMLDivElement>(null);
+  const outlineRequestRef=useRef(0);
+  const outlineDraftRef=useRef(12);
+  const [outlineDraft,setOutlineDraft]=useState(12);
   const [templateName,setTemplateName]=useState('Meu template Zero a 2');
   const [myTemplates,setMyTemplates]=useState<SavedTemplate[]>([]);
   const [activeCustomId,setActiveCustomId]=useState<string|null>(null);
@@ -379,8 +387,51 @@ export default function App(){
   // Leave room for the scrollable viewport's padding; manual zoom can exceed the viewport and scroll.
   const fitScale=Math.min(.95,Math.max(.1,Math.min((containerSize.w-80)/project.width,(containerSize.h-80)/project.height)));
   const scale=manualZoom??fitScale;
+  // Redimensiona apenas a visualização; a capa/exportação mantém seus pixels originais.
+  const clampCanvasZoom=(value:number)=>Math.round(Math.min(2.5,Math.max(.1,value))*100)/100;
+  function startCanvasResize(e:ReactPointerEvent<HTMLButtonElement>){
+    if(e.button!==0)return;
+    e.preventDefault();e.stopPropagation();
+    canvasResizeRef.current={x:e.clientX,y:e.clientY,scale,proposed:scale};
+    if(zoomPreviewRef.current){
+      zoomPreviewRef.current.hidden=false;
+      zoomPreviewRef.current.style.width=`${project.width*scale}px`;
+      zoomPreviewRef.current.style.height=`${project.height*scale}px`;
+      zoomPreviewRef.current.textContent=`${Math.round(scale*100)}%`;
+    }
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }
+  function moveCanvasResize(e:ReactPointerEvent<HTMLButtonElement>){
+    const anchor=canvasResizeRef.current;
+    if(!anchor)return;
+    e.preventDefault();e.stopPropagation();
+    // Preview just a lightweight outline. Rerendering the Konva Stage on every
+    // pixel of the drag caused large image canvases to stutter and jump.
+    const dx=(e.clientX-anchor.x)/project.width;
+    const dy=(e.clientY-anchor.y)/project.height;
+    const next=clampCanvasZoom(anchor.scale+(Math.abs(dx)>=Math.abs(dy)?dx:dy));
+    anchor.proposed=next;
+    if(zoomPreviewRef.current){
+      zoomPreviewRef.current.style.width=`${project.width*next}px`;
+      zoomPreviewRef.current.style.height=`${project.height*next}px`;
+      zoomPreviewRef.current.textContent=`${Math.round(next*100)}%`;
+    }
+  }
+  function stopCanvasResize(e:ReactPointerEvent<HTMLButtonElement>){
+    const anchor=canvasResizeRef.current;
+    canvasResizeRef.current=null;
+    e.stopPropagation();
+    if(zoomPreviewRef.current)zoomPreviewRef.current.hidden=true;
+    if(e.currentTarget.hasPointerCapture(e.pointerId))e.currentTarget.releasePointerCapture(e.pointerId);
+    if(anchor&&e.type==='pointerup')setManualZoom(anchor.proposed);
+  }
   const current=project.layers.find(l=>l.id===selected);
   const currentNativePiece = pic(current) ? findNativePiece(current) : undefined;
+  useEffect(()=>{
+    const value=pic(current)?current.outlineWidth??12:12;
+    outlineDraftRef.current=value;
+    setOutlineDraft(value);
+  },[current?.id, pic(current)?current.outlineWidth:undefined]);
   const currentPictureSrc=pic(current)?current.src:null;
   useEffect(()=>{
     if(!currentPictureSrc){setImageSize({src:'',width:0,height:0});return;}
@@ -448,9 +499,22 @@ export default function App(){
   }
   function applyCrop(crop:NormalizedCrop|undefined){
     if(!croppingId)return;
-    updateLayer(croppingId,{crop,fit:crop?'cover':'contain'});
+    const layer=project.layers.find(l=>l.id===croppingId);
+    if(!pic(layer)){setCroppingId(null);return;}
+    // The crop editor selects source pixels. Shrink the on-canvas frame as well,
+    // otherwise the transparent/empty old box keeps covering the canvas.
+    if(!crop){updateLayer(layer.id,calculateCropPatch(layer,undefined,1,1,project));}
+    else {
+      const sameSrc=imageSize.src===layer.src;
+      const w=sameSrc?imageSize.width:0,h=sameSrc?imageSize.height:0;
+      if(w>0&&h>0)updateLayer(layer.id,calculateCropPatch(layer,crop,w,h,project));
+      else {
+        const image=new Image();image.onload=()=>updateLayer(layer.id,calculateCropPatch(layer,crop,image.naturalWidth,image.naturalHeight,project));
+        image.src=layer.src;
+      }
+    }
     setCroppingId(null);
-    setNotice(crop?'Recorte aplicado sem alterar a imagem original. Ele será salvo no projeto.':'Recorte removido e imagem original restaurada.');
+    setNotice(crop?'Recorte aplicado e quadro ajustado ao tamanho da região selecionada. A imagem original foi preservada.':'Recorte removido e dimensões anteriores restauradas.');
   }
   function updateBackdrop(patch:Partial<Template['background']>){
     setProject(prev=>({...prev,background:{...prev.background,...patch}}));
@@ -469,7 +533,24 @@ export default function App(){
     setFaceFile(null);cutouts.current.clear();photosRef.current.clear();setSelected('logo');
     setNotice(`Template “${catalog.find(x=>x.id===next)?.name}” aplicado. As peças podem ser substituídas.`);
   }
+  async function addNewPhoto(file?:File){
+    if(!file)return;
+    if(!['image/png','image/jpeg','image/webp'].includes(file.type)){setNotice('Envie uma foto PNG, JPG ou WebP.');return;}
+    try{
+      const bitmap=await createImageBitmap(file);
+      const size=boundedImageSize(project,bitmap.width,bitmap.height);
+      bitmap.close();
+      const id=crypto.randomUUID();
+      const src=makeUrl(file);
+      const pos=findFreePosition(project,size.width,size.height,selectedIds);
+      const layer:PictureLayer={id,type:'picture',name:file.name.replace(/\.[^/.]+$/,'')||'Nova fotografia',role:'face',src,originalSrc:src,fileName:file.name,fit:'contain',x:pos.x,y:pos.y,width:size.width,height:size.height,lockAspect:true};
+      photosRef.current.set(id,file);setFaceFile({id,file});
+      setProject(prev=>({...prev,layers:[...prev.layers,layer]}));setSelected(id);
+      setNotice('Fotografia adicionada como NOVA camada, sem substituir a peça anterior. Use “Trocar foto” para substituir uma imagem selecionada.');
+    }catch(e){setNotice(`Não foi possível adicionar a fotografia: ${e instanceof Error?e.message:String(e)}`);}
+  }
   function uploadFace(file?:File,idOverride?:string|null){
+    if(idOverride==='__new__'){void addNewPhoto(file);return;}
     if(!file)return;
     if(!['image/png','image/jpeg','image/webp'].includes(file.type)){setNotice('Envie uma foto PNG, JPG ou WebP.');return;}
     const id=idOverride||(pic(current)&&current.role!=='logo'?current.id:activeFaceId);
@@ -477,6 +558,26 @@ export default function App(){
     const source=makeUrl(file);
     updateLayer(id,{src:source,originalSrc:source,cutoutSrc:undefined,isCutout:false,fileName:file.name,fit:'contain',crop:undefined});
     setSelected(id);setNotice('Imagem carregada preservando o slot. Para fotos de pessoas, clique em “Recortar fundo local”.');
+  }
+  /** Fit the draggable selection frame to non-transparent pixels, not the
+   * bitmap's unused transparent margins. The full source PNG is retained. */
+  async function alphaFitPatch(layer:PictureLayer, outlined:Blob){
+    const bounds=await findAlphaBounds(outlined);
+    if(!bounds)return {crop:undefined,uncroppedFrame:undefined,fit:'contain' as const};
+    const base:PictureLayer={...layer,crop:undefined,uncroppedFrame:layer.uncroppedFrame};
+    return calculateCropPatch(base,bounds.crop,bounds.width,bounds.height,project);
+  }
+  async function fitSelectedToContent(){
+    if(!pic(current))return;
+    const id=current.id;
+    try{
+      const blob=await (await fetch(current.src)).blob();
+      const bounds=await findAlphaBounds(blob);
+      if(!bounds){setNotice('Não foram encontradas margens transparentes significativas nessa imagem.');return;}
+      const patch=calculateCropPatch(current,bounds.crop,bounds.width,bounds.height,project);
+      updateLayer(id,patch);
+      setNotice('Quadro ajustado à silhueta visível; margens transparentes ocultadas sem apagar o PNG original.');
+    }catch(e){setNotice(`Erro ao enquadrar imagem: ${e instanceof Error?e.message:String(e)}`);}
   }
   async function removeBackground(){
     const selectedPhoto=pic(current)&&current.role!=='logo'?current:null;
@@ -493,7 +594,8 @@ export default function App(){
       const color=pic(old)?old.outlineColor??'#ffffff':'#ffffff';
       const thickness=pic(old)?old.outlineWidth??12:12;
       const outlined=await addWhiteOutline(result.transparent,590,640,thickness,color);
-      updateLayer(id,{src:makeUrl(outlined),cutoutSrc:makeUrl(result.transparent),isCutout:true,outlineWidth:thickness,outlineColor:color,fit:'contain',crop:undefined});
+      const fit=pic(old)?await alphaFitPatch(old,outlined):{};
+      updateLayer(id,{...fit,src:makeUrl(outlined),cutoutSrc:makeUrl(result.transparent),isCutout:true,outlineWidth:thickness,outlineColor:color,fit:'contain'});
       setSelected(id);setMaskSession({id,original:input,cutout:result.transparent});
       setNotice('Recorte automático concluído. Refine a máscara se houver sobras ou partes apagadas.');
     }catch(e){setNotice(`Recorte indisponível: ${e instanceof Error?e.message:String(e)}. Verifique public/models/.`);}
@@ -513,16 +615,24 @@ export default function App(){
     const id=maskSession.id,layer=project.layers.find(l=>l.id===id);
     const width=pic(layer)?layer.outlineWidth??12:12,color=pic(layer)?layer.outlineColor??'#ffffff':'#ffffff';
     const outlined=await addWhiteOutline(blob,590,640,width,color);
-    cutouts.current.set(id,blob);updateLayer(id,{src:makeUrl(outlined),cutoutSrc:makeUrl(blob),isCutout:true});
+    const fit=pic(layer)?await alphaFitPatch(layer,outlined):{};
+    cutouts.current.set(id,blob);updateLayer(id,{...fit,src:makeUrl(outlined),cutoutSrc:makeUrl(blob),isCutout:true});
     setMaskSession(null);setNotice('Máscara manual aplicada; contorno branco refeito sobre a silhueta.');
   }
   async function changeOutline(width:number,color:string){
     if(!pic(current)||current.role!=='face')return;
-    const blob=cutouts.current.get(current.id)??(current.cutoutSrc?await(await fetch(current.cutoutSrc)).blob():null);
-    if(!blob){setNotice('Recorte a foto primeiro para ajustar a silhueta.');return;}
-    const id=current.id;
-    const outlined=await addWhiteOutline(blob,590,640,width,color);
-    updateLayer(id,{src:makeUrl(outlined),outlineWidth:width,outlineColor:color,isCutout:true});
+    const selectedLayer=current;
+    const id=selectedLayer.id;
+    const request=++outlineRequestRef.current;
+    try{
+      const blob=cutouts.current.get(id)??(selectedLayer.cutoutSrc?await(await fetch(selectedLayer.cutoutSrc)).blob():null);
+      if(!blob){setNotice('Recorte a foto primeiro para ajustar a silhueta.');return;}
+      const outlined=await addWhiteOutline(blob,590,640,width,color);
+      const fit=await alphaFitPatch(selectedLayer,outlined);
+      // A slow render must never overwrite a more recent contour/color choice.
+      if(request!==outlineRequestRef.current)return;
+      updateLayer(id,{...fit,src:makeUrl(outlined),outlineWidth:width,outlineColor:color,isCutout:true});
+    }catch(e){setNotice(`Não foi possível ajustar o contorno: ${e instanceof Error?e.message:String(e)}`);}
   }
   function chooseSlot(slot:TemplateSlot){
     setSelected(slot.layerId);
@@ -550,7 +660,7 @@ export default function App(){
     if(slot?.role==='logo'){void uploadLogo(file);return;}
     if(slot?.role==='title'){setSelected(slot.layerId);setNotice('Slot de título: edite o texto no painel direito.');return;}
     if(slot){uploadFace(file,slot.layerId);return;}
-    uploadBackdrop(file);
+    void addNewPhoto(file);
   }
   async function uploadLogo(file?:File){
     if(!file)return;
@@ -569,14 +679,19 @@ export default function App(){
       setSelected('logo');setNotice('Logo aplicado nos templates; paleta extraída localmente.');
     }catch(e){setNotice(`Falha ao ler logo: ${e instanceof Error?e.message:String(e)}`);}
   }
-  function addArrow(){const id=`arrow-${Date.now()}`;setProject(prev=>({...prev,layers:[...prev.layers,{id,name:'Seta viral',type:'arrow',x:260,y:340,points:[0,50,140,0,205,20],width:250,height:155,color:'#ef4444',strokeWidth:25,pointerLength:45,pointerWidth:50}]}));setSelected(id);}
+  function addArrow(){
+    const id=crypto.randomUUID(),width=250,height=155;
+    const pos=findFreePosition(project,width,height,selectedIds);
+    setProject(prev=>({...prev,layers:[...prev.layers,{id,name:'Seta viral',type:'arrow',...pos,points:[0,50,140,0,205,20],width,height,color:'#ef4444',strokeWidth:25,pointerLength:45,pointerWidth:50}]}));
+    setSelected(id);
+  }
   function addPicturePiece(name:string,src:string,width:number,height:number){
-    const id=`piece-${Date.now()}-${Math.round(Math.random()*9999)}`;
-    setProject(prev=>{
-      const layer:PictureLayer={type:'picture',id,name,role:'decoration',x:Math.round(prev.width*.33),y:Math.round(prev.height*.32),width,height,src,fit:'contain',lockAspect:true,nativePieceId:nativePieces.find(p=>p.src===src)?.id};
-      return {...prev,layers:[...prev.layers,layer]};
-    });
-    setSelected(id);setNotice(`Peça “${name}” adicionada. Arraste as alças amarelas ou ajuste o tamanho no painel direito.`);
+    const id=crypto.randomUUID();
+    const size=boundedImageSize(project,width,height);
+    const pos=findFreePosition(project,size.width,size.height,selectedIds);
+    const layer:PictureLayer={type:'picture',id,name,role:'decoration',...pos,...size,src,fit:'contain',lockAspect:true,nativePieceId:nativePieces.find(p=>p.src===src)?.id};
+    setProject(prev=>({...prev,layers:[...prev.layers,layer]}));
+    setSelected(id);setNotice(`Peça “${name}” adicionada como uma nova camada em uma posição livre.`);
   }
   function restoreNativePiece(){
     if (!pic(current) || !currentNativePiece) return;
@@ -587,8 +702,14 @@ export default function App(){
     });
     setNotice(`“${currentNativePiece.name}” voltou à arte e proporções originais.`);
   }
-  function addCircle(){const id=`circle-${Date.now()}`;setProject(prev=>({...prev,layers:[...prev.layers,{id,name:'Círculo destaque',type:'circle',x:440,y:280,radius:150,color:'#ffcc00',strokeWidth:18}]}));setSelected(id);}
-  function addText(){const id=`text-${Date.now()}`;setProject(prev=>({...prev,layers:[...prev.layers,{id,name:'Novo texto',type:'text',x:60,y:420,width:520,text:'NOVO TEXTO',fontFamily:'Impact, Arial Black, sans-serif',fontSize:76,lineHeight:1.02,color:'#ffcc00',stroke:'#080808',strokeWidth:10,shadowColor:'#000000',shadowBlur:10,shadowOffsetY:8}]}));setSelected(id);}
+  function addCircle(){
+    const id=crypto.randomUUID(),radius=110,pos=findFreePosition(project,radius*2,radius*2,selectedIds);
+    setProject(prev=>({...prev,layers:[...prev.layers,{id,name:'Círculo destaque',type:'circle',x:pos.x+radius,y:pos.y+radius,radius,color:'#ffcc00',strokeWidth:18}]}));setSelected(id);
+  }
+  function addText(){
+    const id=crypto.randomUUID(),width=Math.min(520,project.width*.7),fontSize=72,pos=findFreePosition(project,width,fontSize*1.25,selectedIds);
+    setProject(prev=>({...prev,layers:[...prev.layers,{id,name:'Novo texto',type:'text',...pos,width,text:'NOVO TEXTO',fontFamily:'Impact, Arial Black, sans-serif',fontSize,lineHeight:1.02,color:'#ffcc00',stroke:'#080808',strokeWidth:10,shadowColor:'#000000',shadowBlur:10,shadowOffsetY:8}]}));setSelected(id);
+  }
   /** Size controls work for pictures, arrows, text and circles; never rely exclusively on Konva handles. */
   function layerDimensions(layer:SceneLayer):{width:number;height:number}{
     if(layer.type==='picture')return {width:layer.width,height:layer.height};
@@ -661,7 +782,7 @@ export default function App(){
     const stage=stageRef.current;if(!stage)return;
     const tr=stage.findOne('Transformer');const slotLayer=stage.findOne('.slot-guides');tr?.hide();slotLayer?.hide();stage.draw();
     try{
-      const png=stage.toDataURL({pixelRatio:1/scale,mimeType:'image/png'});
+      const png=stage.toDataURL({x:PASTEBOARD*scale,y:PASTEBOARD*scale,width:project.width*scale,height:project.height*scale,pixelRatio:1/scale,mimeType:'image/png'});
       const a=document.createElement('a');a.href=png;
       a.download=`${filename.replace(/[^a-z0-9á-ú _-]/gi,'').trim().replace(/\s+/g,'-')||'thumbnail'}-${format.replace(':','x')}.png`;
       document.body.appendChild(a);a.click();a.remove();
@@ -680,11 +801,12 @@ export default function App(){
         <button className="outline-top" disabled={!storageReady||projectActionBusy} onClick={()=>void flushCurrent().then(()=>setNotice('Projeto salvo neste navegador.')).catch(()=>{})}><Save size={15}/> Salvar agora</button>
         <button className="outline-top" onClick={()=>setTab('projects')}><FolderOpen size={15}/> Projetos</button>
         <div className="format-switch"><button className={format==='16:9'?'on':''} onClick={()=>switchFormat('16:9')}><Monitor size={14}/> YouTube 16:9</button><button className={format==='9:16'?'on':''} onClick={()=>switchFormat('9:16')}><Smartphone size={14}/> TikTok 9:16</button></div>
-        <div className="zoom-control" aria-label="Zoom do canvas">
-          <button title="Diminuir zoom do canvas" aria-label="Diminuir zoom" onClick={()=>setManualZoom(Math.max(.1,Math.round((scale-.1)*100)/100))}><ZoomOut size={15}/></button>
+        <div className="zoom-control" aria-label="Zoom do canvas" title="Muda só o tamanho na tela. O arquivo PNG mantém a resolução original.">
+          <button title="Diminuir zoom do canvas" aria-label="Diminuir zoom" onClick={()=>setManualZoom(clampCanvasZoom(scale-.1))}><ZoomOut size={15}/></button>
           <span>{Math.round(scale*100)}%</span>
-          <button title="Aumentar zoom do canvas" aria-label="Aumentar zoom" onClick={()=>setManualZoom(Math.min(2,Math.round((scale+.1)*100)/100))}><ZoomIn size={15}/></button>
-          <button title="Ajustar canvas à tela" aria-label="Ajustar zoom à tela" onClick={()=>setManualZoom(null)}><Maximize2 size={15}/></button>
+          <input className="canvas-zoom-slider" aria-label="Tamanho da visualização da thumbnail" type="range" min="10" max="250" step="5" value={Math.round(scale*100)} onChange={e=>setManualZoom(clampCanvasZoom(Number(e.target.value)/100))}/>
+          <button title="Aumentar zoom do canvas" aria-label="Aumentar zoom" onClick={()=>setManualZoom(clampCanvasZoom(scale+.1))}><ZoomIn size={15}/></button>
+          <button title="Ajustar thumbnail à janela" aria-label="Ajustar zoom à tela" onClick={()=>setManualZoom(null)}><Maximize2 size={15}/></button>
         </div>
         <button className={`outline-top ${guides?'on':''}`} onClick={()=>setGuides(!guides)}><Eye size={16}/> Safe Zones</button>
         <button className="studio-export" onClick={exportPng}><ArrowDownToLine size={17}/> Exportar HD</button>
@@ -764,7 +886,7 @@ export default function App(){
               <button onClick={addArrow}><ArrowUpRight size={31}/><span>Seta editável</span></button>
               <button onClick={addCircle}><Circle size={31}/><span>Círculo editável</span></button>
               <button onClick={addText}><Type size={31}/><span>Texto 3D</span></button>
-              <button onClick={()=>faceInputRef.current?.click()}><ImagePlus size={31}/><span>Fotografia</span></button>
+              <button onClick={()=>{photoTargetRef.current='__new__';faceInputRef.current?.click();}}><ImagePlus size={31}/><span>Nova fotografia</span></button>
             </div>
             <div className="asset-custom-heading"><h4>Minhas peças ({customPieces.length})</h4><button disabled={customPiecesBusy} onClick={()=>customPieceInputRef.current?.click()}><Plus size={14}/> Adicionar</button></div>
             {customPiecesLoading?<p className="asset-muted">Carregando biblioteca…</p>:
@@ -783,26 +905,38 @@ export default function App(){
         </div>
       </aside>
       <main className="studio-workspace">
-        <div className="dotted-stage" ref={layoutRef} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();uploadFace(e.dataTransfer.files[0]);}}>
+        <div className="dotted-stage" ref={layoutRef} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();void addNewPhoto(e.dataTransfer.files[0]);}}>
           <div className="stage-scroll-content">
-          <div className={`scene-holder ${draggingFile?'dragging-image':''}`} style={{width:project.width*scale,height:project.height*scale}}
+          <div className={`scene-holder ${draggingFile?'dragging-image':''}`} style={{width:(project.width+PASTEBOARD*2)*scale,height:(project.height+PASTEBOARD*2)*scale}}
             onDragEnter={e=>{if(e.dataTransfer.types.includes('Files')){e.preventDefault();dropOverRef.current++;setDraggingFile(true);}}}
             onDragLeave={e=>{e.preventDefault();dropOverRef.current=Math.max(0,dropOverRef.current-1);if(dropOverRef.current===0)setDraggingFile(false);}}
             onDragOver={e=>{if(e.dataTransfer.types.includes('Files'))e.preventDefault();}}
-            onDrop={e=>{e.preventDefault();dropOverRef.current=0;setDraggingFile(false);const file=e.dataTransfer.files[0];if(!file)return;
-              const bounds=e.currentTarget.getBoundingClientRect();acceptDroppedFile(file,(e.clientX-bounds.left)/scale,(e.clientY-bounds.top)/scale);}}
+            onDrop={e=>{e.preventDefault();e.stopPropagation();dropOverRef.current=0;setDraggingFile(false);const file=e.dataTransfer.files[0];if(!file)return;
+              const bounds=e.currentTarget.getBoundingClientRect();acceptDroppedFile(file,(e.clientX-bounds.left)/scale-PASTEBOARD,(e.clientY-bounds.top)/scale-PASTEBOARD);}}
           >
             <ThumbnailCanvas project={project} scale={scale} showSlots={showSlots} selectedIds={selectedIds} stageRef={stageRef} select={selectLayer} updateMany={updateLayers}/>
-            {draggingFile&&<div className="file-drop-hint">Solte na moldura ou fora dela para trocar o fundo</div>}
-            {backgroundDistorted&&<div className="distortion-overlay background-warning"><AlertTriangle size={13}/> Fundo deformado · {Math.round(backgroundRatioError*100)}%</div>}
-            {isStretched&&pic(current)&&<div className="distortion-overlay" style={{left:Math.max(3,current.x*scale),top:Math.max(3,current.y*scale-30)}}><AlertTriangle size={13}/> Imagem deformada · {aspectPercent}%</div>}
-            {guides&&<div className={`safe-guide ${format==='9:16'?'portrait':''}`}><div className="guide-border"/><div className="timer-zone">TEMPO / INTERFACE</div><div className="guide-note">Área aproximada · confirme na plataforma</div></div>}
+            <div ref={zoomPreviewRef} className="zoom-outline-preview" hidden style={{left:PASTEBOARD*scale,top:PASTEBOARD*scale}} aria-hidden="true"/>
+            <div className="artboard-overlay" style={{left:PASTEBOARD*scale,top:PASTEBOARD*scale,width:project.width*scale,height:project.height*scale}}>
+              {draggingFile&&<div className="file-drop-hint">Solte na moldura para substituir ou no restante do canvas para adicionar uma foto</div>}
+              {backgroundDistorted&&<div className="distortion-overlay background-warning"><AlertTriangle size={13}/> Fundo deformado · {Math.round(backgroundRatioError*100)}%</div>}
+              {isStretched&&pic(current)&&<div className="distortion-overlay" style={{left:Math.max(3,current.x*scale),top:Math.max(3,current.y*scale-30)}}><AlertTriangle size={13}/> Imagem deformada · {aspectPercent}%</div>}
+              {guides&&<div className={`safe-guide ${format==='9:16'?'portrait':''}`}><div className="guide-border"/><div className="timer-zone">TEMPO / INTERFACE</div><div className="guide-note">Área aproximada · confirme na plataforma</div></div>}
+              <button type="button" className="artboard-zoom-grip"
+                title="Arraste para redimensionar a thumbnail na tela. Dê dois cliques para ajustar à janela. A exportação não muda."
+                aria-label="Arrastar para aumentar ou diminuir visualização da thumbnail"
+                onPointerDown={startCanvasResize} onPointerMove={moveCanvasResize}
+                onPointerUp={stopCanvasResize} onPointerCancel={stopCanvasResize}
+                onDoubleClick={e=>{e.preventDefault();e.stopPropagation();setManualZoom(null);}}
+                onClick={e=>e.stopPropagation()}>
+                <Maximize2 size={15}/>
+              </button>
+            </div>
           </div>
           </div>
         </div>
         <div className="bottom-actions">
-          <span><span className="online-dot"/> {activeCustomId?'Template personalizado':selectedMeta?.name} · {project.width} × {project.height}</span>
-          <div><button onClick={()=>{photoTargetRef.current=null;faceInputRef.current?.click();}} disabled={busy}><ImagePlus size={15}/> Trocar foto</button><button className="cut-btn" onClick={()=>void removeBackground()} disabled={busy||!(pic(current)&&current.originalSrc)&&!faceFile}><WandSparkles size={15}/> {busy?`Recortando ${progress||'…'}%`:'Recortar fundo local'}</button></div>
+          <span><span className="online-dot"/> {activeCustomId?'Template personalizado':selectedMeta?.name} · {project.width} × {project.height}px · visualização {Math.round(scale*100)}% (arraste o canto da capa)</span>
+          <div><button onClick={()=>{photoTargetRef.current='__new__';faceInputRef.current?.click();}} disabled={busy}><ImagePlus size={15}/> Adicionar foto</button><button onClick={()=>{photoTargetRef.current=null;faceInputRef.current?.click();}} disabled={busy}><RotateCcw size={15}/> Trocar foto</button><button className="cut-btn" onClick={()=>void removeBackground()} disabled={busy||!(pic(current)&&current.originalSrc)&&!faceFile}><WandSparkles size={15}/> {busy?`Recortando ${progress||'…'}%`:'Recortar fundo local'}</button></div>
         </div>
         <div className="status-note"><LockKeyhole size={13}/> {notice}</div>
       </main>
@@ -840,10 +974,16 @@ export default function App(){
           {txt(current)&&<section className="props-box"><h3>Texto e efeitos</h3><label>Conteúdo</label><textarea value={current.text} rows={3} onChange={e=>updateLayer(current.id,{text:e.target.value})}/><label>Fonte</label><select value={current.fontFamily} onChange={e=>updateLayer(current.id,{fontFamily:e.target.value})}><option value="Road Rage">Road Rage · grunge</option><option value="Permanent Marker">Permanent Marker · pincel</option><option value="Knewave">Knewave · pintura</option><option value="Bangers">Bangers · impacto</option><option value="Impact, Arial Black, sans-serif">Impact · clássico</option></select><label>Tamanho <b>{current.fontSize}px</b></label><input type="range" min="20" max="160" value={current.fontSize} onChange={e=>updateLayer(current.id,{fontSize:+e.target.value})}/><label>Cor</label><input type="color" value={current.color} onChange={e=>updateLayer(current.id,{color:e.target.value})}/><label>Borda <b>{current.strokeWidth}px</b></label><input type="range" min="0" max="25" value={current.strokeWidth} onChange={e=>updateLayer(current.id,{strokeWidth:+e.target.value})}/></section>}
           {pic(current)&&<section className="props-box"><h3>{current.role==='face'?'Recorte inteligente':current.role==='logo'?'Imagem do canal':'Peça gráfica'}</h3><label>Como encaixar a imagem</label><select value={current.fit??'contain'} onChange={e=>updateLayer(current.id,{fit:e.target.value as 'contain'|'cover'|'stretch'})}><option value="contain">Proporcional · mostrar tudo</option><option value="cover">Proporcional · preencher (recortar bordas)</option><option value="stretch">Esticar · pode deformar</option></select>
           <button className="crop-open" onClick={()=>setCroppingId(current.id)}><Crop size={16}/> Recortar imagem / reenquadrar</button>
+          <button className="outline-button" onClick={()=>void fitSelectedToContent()}><Maximize2 size={15}/> Ajustar quadro ao conteúdo visível</button>
           {current.crop&&<p>Recorte ativo: {Math.round(current.crop.width*100)}% × {Math.round(current.crop.height*100)}% da imagem. Você pode editá-lo quando quiser.</p>}
           {hasNativeSize&&<div className={`aspect-status ${isStretched?'bad':'good'}`}><strong>{isStretched?<><AlertTriangle size={15}/> Deformação detectada: {aspectPercent}%</>:<><Check size={15}/> Proporção preservada</>}</strong><small>Imagem original: {imageSize.width} × {imageSize.height}px · Quadro: {Math.round(current.width)} × {Math.round(current.height)}px</small>{aspectError>.03&&current.fit!=='stretch'&&<small>O quadro tem outra proporção ({aspectPercent}%). O modo escolhido preserva a imagem por encaixe ou recorte.</small>}</div>}
           {hasNativeSize&&<button className="outline-button" onClick={()=>updateLayer(current.id,{height:Math.round(current.width/originalRatio),fit:'contain'})}>Restaurar proporção original do quadro</button>}
-          <button className="yellow-wide" onClick={()=>{if(current.role==='logo')logoInputRef.current?.click();else {photoTargetRef.current=current.id;faceInputRef.current?.click();}}}><Upload size={15}/> Trocar arquivo</button>{current.role==='face'&&<><label>Qualidade da segmentação</label><select value={cutoutQuality} onChange={e=>setCutoutQuality(e.target.value as CutoutQuality)}><option value="isnet_quint8">Leve · CPU/WASM (~40 MB)</option><option value="isnet_fp16">Detalhes finos · CPU/WASM (~80 MB)</option></select><p>{current.isCutout?'Fundo transparente + contorno aplicado':'Envie uma foto e remova o fundo com WASM local.'}</p><button className="outline-button" disabled={busy||!(current.originalSrc||photosRef.current.has(current.id))} onClick={()=>void removeBackground()}><WandSparkles size={15}/> Recorte + contorno</button>{current.isCutout&&<><button className="mask-edit-button" onClick={()=>void openMaskEditor()}><WandSparkles size={15}/> Ajustar máscara / pincel manual</button><label>Contorno <b>{current.outlineWidth??12}px</b></label><input type="range" min="0" max="28" value={current.outlineWidth??12} onChange={e=>void changeOutline(+e.target.value,current.outlineColor??'#ffffff')}/><label>Cor do contorno</label><input type="color" value={current.outlineColor??'#ffffff'} onChange={e=>void changeOutline(current.outlineWidth??12,e.target.value)}/></>}</>}</section>}
+          <button className="yellow-wide" onClick={()=>{if(current.role==='logo')logoInputRef.current?.click();else {photoTargetRef.current=current.id;faceInputRef.current?.click();}}}><Upload size={15}/> Trocar arquivo</button>{current.role==='face'&&<><label>Qualidade da segmentação</label><select value={cutoutQuality} onChange={e=>setCutoutQuality(e.target.value as CutoutQuality)}><option value="isnet_quint8">Leve · CPU/WASM (~40 MB)</option><option value="isnet_fp16">Detalhes finos · CPU/WASM (~80 MB)</option></select><p>{current.isCutout?'Fundo transparente + contorno aplicado':'Envie uma foto e remova o fundo com WASM local.'}</p><button className="outline-button" disabled={busy||!(current.originalSrc||photosRef.current.has(current.id))} onClick={()=>void removeBackground()}><WandSparkles size={15}/> Recorte + contorno</button>{current.isCutout&&<><button className="mask-edit-button" onClick={()=>void openMaskEditor()}><WandSparkles size={15}/> Ajustar máscara / pincel manual</button><label>Contorno <b>{outlineDraft}px</b></label><input type="range" min="0" max="28" value={outlineDraft}
+              onChange={e=>{const value=Number(e.target.value);outlineDraftRef.current=value;setOutlineDraft(value);}}
+              onPointerUp={()=>void changeOutline(outlineDraftRef.current,current.outlineColor??'#ffffff')}
+              onKeyUp={e=>{if(['ArrowLeft','ArrowRight','Home','End','PageUp','PageDown'].includes(e.key))void changeOutline(outlineDraftRef.current,current.outlineColor??'#ffffff');}}
+              onBlur={()=>{if(outlineDraftRef.current!==(current.outlineWidth??12))void changeOutline(outlineDraftRef.current,current.outlineColor??'#ffffff');}}
+            /><small>O contorno é recalculado quando você solta o seletor, evitando travamentos.</small><label>Cor do contorno</label><input type="color" value={current.outlineColor??'#ffffff'} onChange={e=>void changeOutline(current.outlineWidth??12,e.target.value)}/></>}</>}</section>}
           {(current.type==='arrow'||current.type==='circle')&&<section className="props-box"><h3>Elemento gráfico</h3><label>Cor</label><input type="color" value={current.color} onChange={e=>updateLayer(current.id,{color:e.target.value})}/></section>}
           {currentNativePiece&&<section className="props-box native-piece-editor">
             <h3>Peça original da biblioteca</h3>

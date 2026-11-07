@@ -4,6 +4,7 @@ import useImage from 'use-image';
 import Konva from 'konva';
 import type { KonvaEventObject } from 'konva/lib/Node';
 import type { SceneLayer, PictureLayer, Template } from '../types/editor';
+import { PASTEBOARD } from '../lib/workspaceLayout';
 
 const ARROW_W=250, ARROW_H=155;
 const minimum=(n:number)=>Math.max(24,Math.round(n));
@@ -107,14 +108,16 @@ export default function ThumbnailCanvas({project,selectedIds,scale,showSlots=fal
     for(const [sid,entry] of current.at){if(sid===id)continue;stageRef.current?.findOne(`#${sid}`)?.position({x:entry.x+dx,y:entry.y+dy});}
     node.getLayer()?.batchDraw();
   }
+  // Keep at least 40px of every moved object's anchor inside the visible pasteboard.
+  const keepReachable=(n:number,limit:number)=>Math.round(Math.max(-PASTEBOARD+40,Math.min(limit+PASTEBOARD-40,n)));
   function finishMove(id:string,node:Konva.Node){
     moveTogether(id,node);
     const current=dragSources.current;dragSources.current=null;
     if(current&&current.id===id){
       const origin=current.at.get(id);if(!origin)return;
       const dx=node.x()-origin.x,dy=node.y()-origin.y;
-      updateMany([...current.at].map(([sid,p])=>({id:sid,patch:{x:p.x+dx,y:p.y+dy}})));
-    }else updateMany([{id,patch:{x:node.x(),y:node.y()}}]);
+      updateMany([...current.at].map(([sid,p])=>({id:sid,patch:{x:keepReachable(p.x+dx,project.width),y:keepReachable(p.y+dy,project.height)}})));
+    }else updateMany([{id,patch:{x:keepReachable(node.x(),project.width),y:keepReachable(node.y(),project.height)}}]);
   }
   function commitTransforms(){
     const patches:Patch[]=[];
@@ -123,7 +126,7 @@ export default function ThumbnailCanvas({project,selectedIds,scale,showSlots=fal
       if(!layer||!node||layer.locked)continue;
       const sx=node.scaleX(),sy=node.scaleY();
       node.scale({x:1,y:1});
-      const base={x:node.x(),y:node.y(),rotation:node.rotation()};
+      const base={x:keepReachable(node.x(),project.width),y:keepReachable(node.y(),project.height),rotation:node.rotation()};
       if(layer.type==='picture')patches.push({id,patch:{...base,width:minimum(layer.width*Math.abs(sx)),height:minimum(layer.height*Math.abs(sy))}});
       else if(layer.type==='arrow')patches.push({id,patch:{...base,width:minimum((layer.width??ARROW_W)*Math.abs(sx)),height:minimum((layer.height??ARROW_H)*Math.abs(sy))}});
       else if(layer.type==='text')patches.push({id,patch:{...base,width:minimum(layer.width*Math.abs(sx)),fontSize:Math.max(12,layer.fontSize*Math.abs(sy))}});
@@ -155,10 +158,10 @@ export default function ThumbnailCanvas({project,selectedIds,scale,showSlots=fal
     if(!e.evt.shiftKey)select(null);
     ids.forEach((id,i)=>select(id,e.evt.shiftKey||i>0));
   }
-  return <Stage ref={stageRef} width={project.width*scale} height={project.height*scale}
+  return <Stage ref={stageRef} width={(project.width+2*PASTEBOARD)*scale} height={(project.height+2*PASTEBOARD)*scale}
       onMouseDown={startSelection} onMouseMove={moveSelection} onMouseUp={finishSelection}
       onTouchStart={e=>{if(e.target===e.target.getStage())select(null);}}>
-    <Layer scaleX={scale} scaleY={scale}>
+    <Layer x={PASTEBOARD*scale} y={PASTEBOARD*scale} scaleX={scale} scaleY={scale}>
       <Backdrop template={project}/>
       {project.layers.map(item=>{
         if(item.type==='picture')return <Picture key={item.id} item={item} onChoose={select} onMoveStart={startMove} onMove={moveTogether} onMoveFinish={finishMove}/>;
@@ -199,7 +202,7 @@ export default function ThumbnailCanvas({project,selectedIds,scale,showSlots=fal
         onTransformEnd={commitTransforms}/>
     </Layer>
     {selectionBox&&<Layer listening={false}><Rect {...selectionBox} stroke="#ffcb22" dash={[7,4]} fill="rgba(255,203,34,0.12)" listening={false}/></Layer>}
-    {showSlots&&project.slots&&<Layer name="slot-guides" listening={false} scaleX={scale} scaleY={scale}>
+    {showSlots&&project.slots&&<Layer name="slot-guides" listening={false} x={PASTEBOARD*scale} y={PASTEBOARD*scale} scaleX={scale} scaleY={scale}>
       {project.slots.map(slot=><Group key={slot.id} x={slot.x} y={slot.y} listening={false}>
         <Rect width={slot.width} height={slot.height} stroke={slot.outlineColor??'#ffcc00'} strokeWidth={slot.outlineWidth??2}
           dash={[11,8]} cornerRadius={12} opacity={.86} listening={false}/>

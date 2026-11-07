@@ -228,3 +228,33 @@ html,body,#root{width:100%;height:100%;min-width:0;margin:0}
 .asset-grid .asset-custom-remove>svg { width:14px;height:14px;min-height:0;margin:0;color:inherit; }
 .asset-error {font-size:11px!important;color:#ffb5af!important;border:1px solid #7d3338;background:#321a1d;border-radius:8px;padding:9px;margin:12px 0!important;overflow-wrap:anywhere}
 @media(min-width:1500px){.asset-grid>button,.asset-grid .asset-custom-insert{min-height:148px;height:148px}}
+
+/* v0.8.3: visible pasteboard surrounding the export-only artboard. */
+.scene-holder {background:transparent;outline:none;overflow:visible;border-radius:0;box-shadow:none;}
+.artboard-overlay {position:absolute;pointer-events:none;z-index:2;outline:2px solid #c7a346;box-shadow:0 22px 48px #000a;}
+.artboard-overlay .safe-guide{inset:0;}
+.artboard-overlay .file-drop-hint{inset:5%;}
+.stage-scroll-content {padding:34px;}
+/* Artboard and surrounding pasteboard can scroll horizontally and vertically at any zoom. */
+.dotted-stage {overscroll-behavior:contain;}
+@media(max-width:850px){.stage-scroll-content{padding:12px}.bottom-actions>div{flex-wrap:wrap;}}
+
+
+/* v0.8.4 — arraste o canto da capa para alterar apenas seu tamanho visual. */
+.canvas-zoom-slider { width:105px; max-width:14vw; height:16px; accent-color:#ffcc28; cursor:pointer; }
+.artboard-zoom-grip {
+  position:absolute; right:-18px;bottom:-18px;z-index:30;
+  width:36px;height:36px;display:grid;place-items:center;
+  border:2px solid #111216;border-radius:10px;background:#ffca2d;color:#181818;
+  pointer-events:auto;cursor:nwse-resize;touch-action:none;user-select:none;
+  box-shadow:0 3px 14px #000a;
+}
+.artboard-zoom-grip:hover,.artboard-zoom-grip:focus-visible { background:#ffe077;outline:2px solid #fff;outline-offset:2px; }
+.artboard-zoom-grip:active{background:#f4a700;}
+@media(max-width:1150px){.canvas-zoom-slider{width:75px;}}
+@media(max-width:720px){.canvas-zoom-slider{width:62px;max-width:18vw}.artboard-zoom-grip{width:34px;height:34px;right:-17px;bottom:-17px}}
+
+/* v0.8.5: cheap preview during artboard zoom, no Konva rebuild per pointermove. */
+.zoom-outline-preview{position:absolute;z-index:35;pointer-events:none;border:2px dashed #ffe36d;background:rgba(255,204,45,.04);box-shadow:0 0 0 1px #1119 inset;display:flex;align-items:flex-start;justify-content:flex-end;color:#111;font-size:12px;font-weight:900;padding:5px;}
+.zoom-outline-preview[hidden]{display:none!important;}
+.zoom-outline-preview::first-line{background:#ffcc2d;}

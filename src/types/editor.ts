@@ -1,7 +1,7 @@
 export type BaseLayer = { id: string; name: string; x: number; y: number; rotation?: number; locked?: boolean; lockAspect?: boolean; slotId?: string; flipX?: boolean; flipY?: boolean };
 export type TextLayer = BaseLayer & { type: 'text'; text: string; width: number; fontSize: number; fontFamily: string; color: string; stroke: string; strokeWidth: number; lineHeight: number; shadowColor: string; shadowBlur: number; shadowOffsetY: number; };
 export type NormalizedCrop = { x: number; y: number; width: number; height: number };
-export type PictureLayer = BaseLayer & { type: 'picture'; role: 'face'|'logo'|'decoration'; nativePieceId?: string; src: string; width: number; height: number; opacity?: number; isCutout?: boolean; fileName?: string; cutoutSrc?: string; originalSrc?: string; outlineWidth?: number; outlineColor?: string; fit?: 'contain'|'cover'|'stretch'; crop?: NormalizedCrop; };
+export type PictureLayer = BaseLayer & { type: 'picture'; role: 'face'|'logo'|'decoration'; nativePieceId?: string; src: string; width: number; height: number; opacity?: number; isCutout?: boolean; fileName?: string; cutoutSrc?: string; originalSrc?: string; outlineWidth?: number; outlineColor?: string; fit?: 'contain'|'cover'|'stretch'; crop?: NormalizedCrop; uncroppedFrame?: {x:number;y:number;width:number;height:number;fit?:'contain'|'cover'|'stretch'}; };
 export type ArrowLayer = BaseLayer & { type: 'arrow'; points: number[]; width?: number; height?: number; color: string; strokeWidth: number; pointerLength: number; pointerWidth: number; };
 export type CircleLayer = BaseLayer & { type: 'circle'; radius: number; color: string; strokeWidth: number; };
 export type SceneLayer = TextLayer | PictureLayer | ArrowLayer | CircleLayer;
